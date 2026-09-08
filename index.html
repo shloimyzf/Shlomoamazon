@@ -21,12 +21,10 @@
     .view { display: none; min-height: 100vh; padding: 20px; }
     .active-view { display: block; }
     
-    /* Shared Typography & UI */
     h1 { font-size: 1.5rem; margin-bottom: 1rem; color: #111827; }
     h2 { font-size: 1.1rem; margin-bottom: 0.5rem; color: #4b5563; }
     .card { background: var(--card-bg); padding: 20px; border-radius: 12px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1); margin-bottom: 20px; }
     
-    /* Buttons */
     button { 
       background: var(--primary); color: white; border: none; padding: 16px; 
       font-size: 1.1rem; font-weight: 600; border-radius: 8px; cursor: pointer;
@@ -36,13 +34,11 @@
     button.btn-secondary { background: #64748b; }
     button.btn-success { background: var(--success); }
     
-    /* Mobile Packing UI */
     .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 24px; }
     .step-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
     .reset-btn { background: #ef4444; padding: 8px 12px; font-size: 0.9rem; width: auto; }
     .selection-breadcrumb { font-size: 0.9rem; color: #6b7280; margin-bottom: 15px; }
 
-    /* Desktop UI */
     #desktop-view { max-width: 400px; margin: 0; border-right: 1px solid var(--border); background: var(--card-bg); }
     .flash-green { animation: flash 1s ease-out; }
     @keyframes flash {
@@ -60,7 +56,6 @@
     }
     .history-btn { padding: 6px 12px; font-size: 0.8rem; width: auto; background: #e5e7eb; color: #374151; }
     
-    /* Admin UI */
     textarea { width: 100%; height: 300px; padding: 12px; border: 1px solid var(--border); border-radius: 8px; font-family: monospace; font-size: 0.9rem; margin-bottom: 15px; resize: vertical; }
   </style>
 </head>
@@ -109,17 +104,17 @@
     import { getDatabase, ref, set, update, onValue } from "https://www.gstatic.com/firebasejs/10.4.0/firebase-database.js";
 
     // ==========================================
-    // 1. FIREBASE CONFIGURATION
-    // Replace this with your actual Firebase config
+    // 1. CONFIGURED FIREBASE CREDENTIALS
     // ==========================================
     const firebaseConfig = {
-      apiKey: "YOUR_API_KEY",
-      authDomain: "YOUR_PROJECT_ID.firebaseapp.com",
-      databaseURL: "https://YOUR_PROJECT_ID-default-rtdb.firebaseio.com",
-      projectId: "YOUR_PROJECT_ID",
-      storageBucket: "YOUR_PROJECT_ID.appspot.com",
-      messagingSenderId: "YOUR_MESSAGING_SENDER_ID",
-      appId: "YOUR_APP_ID"
+      apiKey: "AIzaSyBaXj1_y-Qne4bUeS5cCFNLz2wQvJN0lSc",
+      authDomain: "fir-6c676.firebaseapp.com",
+      databaseURL: "https://fir-6c676-default-rtdb.firebaseio.com",
+      projectId: "fir-6c676",
+      storageBucket: "fir-6c676.firebasestorage.app",
+      messagingSenderId: "1040513976068",
+      appId: "1:1040513976068:web:4fcf14887de8699bfb7251",
+      measurementId: "G-T7EB1P2BBZ"
     };
 
     const app = initializeApp(firebaseConfig);
@@ -134,7 +129,6 @@
       const view = document.getElementById(hash);
       if (view) view.classList.add('active-view');
       
-      // Init specific logic based on route
       if (hash === 'pack') initPacker();
       if (hash === 'desktop') initDesktop();
     }
@@ -144,7 +138,7 @@
     // ==========================================
     // DATA LAYER
     // ==========================================
-    let catalog = []; // In-memory database array
+    let catalog = [];
 
     // ==========================================
     // ADMIN LOGIC
@@ -152,14 +146,14 @@
     document.getElementById('btn-import').addEventListener('click', async () => {
       const text = document.getElementById('tsv-input').value;
       const rows = text.trim().split('\n');
-      const updates = {};
+      const catalogData = {};
       let count = 0;
 
       rows.forEach(row => {
         const cols = row.split('\t').map(c => c.trim());
         if (cols.length >= 5) {
           const [category, asin, size, cut, color] = cols;
-          updates[`catalog/${asin}`] = { category, asin, size, cut, color };
+          catalogData[asin] = { category, asin, size, cut, color };
           count++;
         }
       });
@@ -171,7 +165,7 @@
 
       document.getElementById('admin-status').innerText = "Uploading...";
       try {
-        await update(ref(db), updates);
+        await update(ref(db, 'catalog'), catalogData);
         document.getElementById('admin-status').innerText = `✅ Success: Uploaded ${count} items.`;
         document.getElementById('tsv-input').value = '';
       } catch (e) {
@@ -185,14 +179,13 @@
     let p_cat = null, p_size = null, p_cut = null;
 
     function initPacker() {
-      // Load catalog once into memory
       onValue(ref(db, 'catalog'), (snapshot) => {
         const data = snapshot.val();
         if (data) {
           catalog = Object.values(data);
           renderPackStep();
         } else {
-          document.getElementById('options-grid').innerHTML = "<p>Catalog is empty. Go to #admin to upload data.</p>";
+          document.getElementById('options-grid').innerHTML = "<p style='grid-column: span 2; color: #6b7280;'>Catalog is empty. Go to #admin to paste your spreadsheet data.</p>";
         }
       });
 
@@ -210,7 +203,6 @@
       
       grid.innerHTML = '';
       
-      // Format breadcrumb text
       const parts = [p_cat, p_size, p_cut].filter(Boolean);
       breadcrumb.innerText = parts.join(' > ');
       resetBtn.style.display = parts.length > 0 ? 'block' : 'none';
@@ -276,14 +268,12 @@
 
       const summary = `${item.category} - ${item.size} ${item.cut} - ${item.color}`;
       
-      // Push to Firebase for desktop to pick up
       await set(ref(db, 'active'), {
         asin: item.asin,
         summary: summary,
         updatedAt: Date.now()
       });
 
-      // Partial reset: usually you pack the same category, so keep category, reset the rest.
       p_size = null;
       p_cut = null;
       renderPackStep();
@@ -301,52 +291,46 @@
       const card = document.getElementById('desktop-card');
       const btnCopy = document.getElementById('btn-copy-manual');
 
-      // Listen for incoming scans
       onValue(ref(db, 'active'), (snapshot) => {
         const data = snapshot.val();
-        if (!data || data.asin === currentAsin) return; // Prevent loops on load
+        if (!data || data.asin === currentAsin) return;
         
         currentAsin = data.asin;
         asinDisplay.innerText = data.asin;
         summaryDisplay.innerText = data.summary;
 
-        // Visual flash
         card.classList.remove('flash-green');
-        void card.offsetWidth; // trigger reflow
+        void card.offsetWidth;
         card.classList.add('flash-green');
 
-        // Update history
         addToHistory(data.asin, data.summary);
-        
-        // Auto-copy to clipboard
         copyToClipboard(data.asin);
       });
 
-      // Manual copy bindings
       btnCopy.addEventListener('click', () => copyToClipboard(currentAsin));
       
       document.addEventListener('keydown', (e) => {
         if (e.code === 'Space' && window.location.hash === '#desktop') {
-          e.preventDefault(); // Prevent page scroll
+          e.preventDefault();
           copyToClipboard(currentAsin);
         }
       });
     }
 
     async function copyToClipboard(text) {
-      if (!text) return;
+      if (!text || text === '------') return;
       try {
         await navigator.clipboard.writeText(text);
         const btn = document.getElementById('btn-copy-manual');
         btn.innerText = "COPIED!";
         setTimeout(() => btn.innerText = "COPY (Spacebar)", 1500);
       } catch (err) {
-        console.error("Clipboard permission denied. Press Spacebar manually.", err);
+        console.error("Clipboard permission issue:", err);
       }
     }
 
     function addToHistory(asin, summary) {
-      if(history.length > 0 && history[0].asin === asin) return; // Prevent dupes
+      if(history.length > 0 && history[0].asin === asin) return;
 
       history.unshift({ asin, summary });
       if (history.length > 5) history.pop();
