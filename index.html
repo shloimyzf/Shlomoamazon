@@ -1,0 +1,375 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Warehouse ASIN Tool</title>
+  <style>
+    :root {
+      --bg: #f4f4f5;
+      --card-bg: #ffffff;
+      --text: #18181b;
+      --primary: #3b82f6;
+      --primary-hover: #2563eb;
+      --success: #22c55e;
+      --border: #e4e4e7;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: system-ui, -apple-system, sans-serif; }
+    body { background-color: var(--bg); color: var(--text); }
+    
+    .view { display: none; min-height: 100vh; padding: 20px; }
+    .active-view { display: block; }
+    
+    /* Shared Typography & UI */
+    h1 { font-size: 1.5rem; margin-bottom: 1rem; color: #111827; }
+    h2 { font-size: 1.1rem; margin-bottom: 0.5rem; color: #4b5563; }
+    .card { background: var(--card-bg); padding: 20px; border-radius: 12px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1); margin-bottom: 20px; }
+    
+    /* Buttons */
+    button { 
+      background: var(--primary); color: white; border: none; padding: 16px; 
+      font-size: 1.1rem; font-weight: 600; border-radius: 8px; cursor: pointer;
+      transition: background 0.1s, transform 0.1s; width: 100%; text-align: center;
+    }
+    button:active { transform: scale(0.98); }
+    button.btn-secondary { background: #64748b; }
+    button.btn-success { background: var(--success); }
+    
+    /* Mobile Packing UI */
+    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 24px; }
+    .step-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+    .reset-btn { background: #ef4444; padding: 8px 12px; font-size: 0.9rem; width: auto; }
+    .selection-breadcrumb { font-size: 0.9rem; color: #6b7280; margin-bottom: 15px; }
+
+    /* Desktop UI */
+    #desktop-view { max-width: 400px; margin: 0; border-right: 1px solid var(--border); background: var(--card-bg); }
+    .flash-green { animation: flash 1s ease-out; }
+    @keyframes flash {
+      0% { background-color: var(--success); color: white; }
+      100% { background-color: var(--card-bg); color: inherit; }
+    }
+    .asin-display { 
+      font-family: 'Courier New', monospace; font-size: 2.5rem; font-weight: bold; 
+      text-align: center; padding: 30px 10px; background: var(--bg); border-radius: 8px; margin: 20px 0;
+    }
+    .history-list { list-style: none; margin-top: 20px; }
+    .history-item { 
+      display: flex; justify-content: space-between; padding: 12px; 
+      border-bottom: 1px solid var(--border); font-size: 0.9rem; align-items: center;
+    }
+    .history-btn { padding: 6px 12px; font-size: 0.8rem; width: auto; background: #e5e7eb; color: #374151; }
+    
+    /* Admin UI */
+    textarea { width: 100%; height: 300px; padding: 12px; border: 1px solid var(--border); border-radius: 8px; font-family: monospace; font-size: 0.9rem; margin-bottom: 15px; resize: vertical; }
+  </style>
+</head>
+<body>
+
+  <!-- ADMIN VIEW -->
+  <div id="admin" class="view">
+    <div class="card" style="max-width: 800px; margin: 0 auto;">
+      <h1>Import Catalog</h1>
+      <p style="margin-bottom: 15px; color: #6b7280;">Paste Tab-Separated Values from Excel/Sheets.<br>Order: <strong>Category | ASIN | Size | Cut | Color</strong></p>
+      <textarea id="tsv-input" placeholder="King Jersey Polo&#9;B07L38GB1V&#9;4XL&#9;Tall&#9;Midnight Blue..."></textarea>
+      <button id="btn-import">Parse & Upload Catalog</button>
+      <div id="admin-status" style="margin-top: 15px; font-weight: bold;"></div>
+    </div>
+  </div>
+
+  <!-- PACKING VIEW (MOBILE) -->
+  <div id="pack" class="view" style="max-width: 600px; margin: 0 auto;">
+    <div class="step-header">
+      <h1 id="pack-title">Step 1: Category</h1>
+      <button class="reset-btn" id="btn-reset-pack" style="display: none;">Start Over</button>
+    </div>
+    <div class="selection-breadcrumb" id="breadcrumb"></div>
+    <div id="options-grid" class="grid"></div>
+  </div>
+
+  <!-- DESKTOP COMPANION VIEW -->
+  <div id="desktop" class="view">
+    <div class="card" id="desktop-card">
+      <div style="display: flex; justify-content: space-between; align-items: center;">
+        <h2>Active Item</h2>
+        <span id="connection-status" style="color: #6b7280; font-size: 0.8rem;">🟢 Listening</span>
+      </div>
+      <p id="desktop-summary" style="color: #6b7280; margin-top: 10px;">Waiting for scan...</p>
+      <div class="asin-display" id="desktop-asin">------</div>
+      <button id="btn-copy-manual" class="btn-success">COPY (Spacebar)</button>
+    </div>
+    
+    <h3>Recent History</h3>
+    <ul class="history-list" id="history-list"></ul>
+  </div>
+
+  <!-- Firebase SDKs -->
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.4.0/firebase-app.js";
+    import { getDatabase, ref, set, update, onValue } from "https://www.gstatic.com/firebasejs/10.4.0/firebase-database.js";
+
+    // ==========================================
+    // 1. FIREBASE CONFIGURATION
+    // Replace this with your actual Firebase config
+    // ==========================================
+    const firebaseConfig = {
+      apiKey: "YOUR_API_KEY",
+      authDomain: "YOUR_PROJECT_ID.firebaseapp.com",
+      databaseURL: "https://YOUR_PROJECT_ID-default-rtdb.firebaseio.com",
+      projectId: "YOUR_PROJECT_ID",
+      storageBucket: "YOUR_PROJECT_ID.appspot.com",
+      messagingSenderId: "YOUR_MESSAGING_SENDER_ID",
+      appId: "YOUR_APP_ID"
+    };
+
+    const app = initializeApp(firebaseConfig);
+    const db = getDatabase(app);
+
+    // ==========================================
+    // ROUTING LOGIC
+    // ==========================================
+    function handleRoute() {
+      document.querySelectorAll('.view').forEach(v => v.classList.remove('active-view'));
+      const hash = window.location.hash.substring(1) || 'pack';
+      const view = document.getElementById(hash);
+      if (view) view.classList.add('active-view');
+      
+      // Init specific logic based on route
+      if (hash === 'pack') initPacker();
+      if (hash === 'desktop') initDesktop();
+    }
+    window.addEventListener('hashchange', handleRoute);
+    window.addEventListener('DOMContentLoaded', handleRoute);
+
+    // ==========================================
+    // DATA LAYER
+    // ==========================================
+    let catalog = []; // In-memory database array
+
+    // ==========================================
+    // ADMIN LOGIC
+    // ==========================================
+    document.getElementById('btn-import').addEventListener('click', async () => {
+      const text = document.getElementById('tsv-input').value;
+      const rows = text.trim().split('\n');
+      const updates = {};
+      let count = 0;
+
+      rows.forEach(row => {
+        const cols = row.split('\t').map(c => c.trim());
+        if (cols.length >= 5) {
+          const [category, asin, size, cut, color] = cols;
+          updates[`catalog/${asin}`] = { category, asin, size, cut, color };
+          count++;
+        }
+      });
+
+      if (count === 0) {
+        document.getElementById('admin-status').innerText = "❌ No valid rows found. Check format.";
+        return;
+      }
+
+      document.getElementById('admin-status').innerText = "Uploading...";
+      try {
+        await update(ref(db), updates);
+        document.getElementById('admin-status').innerText = `✅ Success: Uploaded ${count} items.`;
+        document.getElementById('tsv-input').value = '';
+      } catch (e) {
+        document.getElementById('admin-status').innerText = `❌ Error: ${e.message}`;
+      }
+    });
+
+    // ==========================================
+    // MOBILE PACKING LOGIC
+    // ==========================================
+    let p_cat = null, p_size = null, p_cut = null;
+
+    function initPacker() {
+      // Load catalog once into memory
+      onValue(ref(db, 'catalog'), (snapshot) => {
+        const data = snapshot.val();
+        if (data) {
+          catalog = Object.values(data);
+          renderPackStep();
+        } else {
+          document.getElementById('options-grid').innerHTML = "<p>Catalog is empty. Go to #admin to upload data.</p>";
+        }
+      });
+
+      document.getElementById('btn-reset-pack').addEventListener('click', () => {
+        p_cat = p_size = p_cut = null;
+        renderPackStep();
+      });
+    }
+
+    function renderPackStep() {
+      const grid = document.getElementById('options-grid');
+      const title = document.getElementById('pack-title');
+      const breadcrumb = document.getElementById('breadcrumb');
+      const resetBtn = document.getElementById('btn-reset-pack');
+      
+      grid.innerHTML = '';
+      
+      // Format breadcrumb text
+      const parts = [p_cat, p_size, p_cut].filter(Boolean);
+      breadcrumb.innerText = parts.join(' > ');
+      resetBtn.style.display = parts.length > 0 ? 'block' : 'none';
+
+      // STEP 1: CATEGORY
+      if (!p_cat) {
+        title.innerText = "Select Category";
+        const categories = [...new Set(catalog.map(i => i.category))].sort();
+        categories.forEach(cat => {
+          const btn = document.createElement('button');
+          btn.innerText = cat;
+          btn.onclick = () => { p_cat = cat; renderPackStep(); };
+          grid.appendChild(btn);
+        });
+        return;
+      }
+
+      const filteredByCat = catalog.filter(i => i.category === p_cat);
+
+      // STEP 2: SIZE
+      if (!p_size) {
+        title.innerText = "Select Size";
+        const sizes = [...new Set(filteredByCat.map(i => i.size))].sort();
+        sizes.forEach(sz => {
+          const btn = document.createElement('button');
+          btn.innerText = sz;
+          btn.onclick = () => { p_size = sz; renderPackStep(); };
+          grid.appendChild(btn);
+        });
+        return;
+      }
+
+      const filteredBySize = filteredByCat.filter(i => i.size === p_size);
+
+      // STEP 3: CUT
+      if (!p_cut) {
+        title.innerText = "Select Cut";
+        const cuts = [...new Set(filteredBySize.map(i => i.cut))].sort();
+        cuts.forEach(ct => {
+          const btn = document.createElement('button');
+          btn.innerText = ct;
+          btn.onclick = () => { p_cut = ct; renderPackStep(); };
+          grid.appendChild(btn);
+        });
+        return;
+      }
+
+      // STEP 4: COLOR
+      title.innerText = "Select Color";
+      const filteredByCut = filteredBySize.filter(i => i.cut === p_cut);
+      
+      filteredByCut.forEach(item => {
+        const btn = document.createElement('button');
+        btn.innerText = item.color;
+        btn.onclick = () => submitScan(item);
+        grid.appendChild(btn);
+      });
+    }
+
+    async function submitScan(item) {
+      document.body.style.backgroundColor = 'var(--success)';
+      setTimeout(() => document.body.style.backgroundColor = 'var(--bg)', 200);
+
+      const summary = `${item.category} - ${item.size} ${item.cut} - ${item.color}`;
+      
+      // Push to Firebase for desktop to pick up
+      await set(ref(db, 'active'), {
+        asin: item.asin,
+        summary: summary,
+        updatedAt: Date.now()
+      });
+
+      // Partial reset: usually you pack the same category, so keep category, reset the rest.
+      p_size = null;
+      p_cut = null;
+      renderPackStep();
+    }
+
+    // ==========================================
+    // DESKTOP COMPANION LOGIC
+    // ==========================================
+    let currentAsin = '';
+    let history = [];
+
+    function initDesktop() {
+      const asinDisplay = document.getElementById('desktop-asin');
+      const summaryDisplay = document.getElementById('desktop-summary');
+      const card = document.getElementById('desktop-card');
+      const btnCopy = document.getElementById('btn-copy-manual');
+
+      // Listen for incoming scans
+      onValue(ref(db, 'active'), (snapshot) => {
+        const data = snapshot.val();
+        if (!data || data.asin === currentAsin) return; // Prevent loops on load
+        
+        currentAsin = data.asin;
+        asinDisplay.innerText = data.asin;
+        summaryDisplay.innerText = data.summary;
+
+        // Visual flash
+        card.classList.remove('flash-green');
+        void card.offsetWidth; // trigger reflow
+        card.classList.add('flash-green');
+
+        // Update history
+        addToHistory(data.asin, data.summary);
+        
+        // Auto-copy to clipboard
+        copyToClipboard(data.asin);
+      });
+
+      // Manual copy bindings
+      btnCopy.addEventListener('click', () => copyToClipboard(currentAsin));
+      
+      document.addEventListener('keydown', (e) => {
+        if (e.code === 'Space' && window.location.hash === '#desktop') {
+          e.preventDefault(); // Prevent page scroll
+          copyToClipboard(currentAsin);
+        }
+      });
+    }
+
+    async function copyToClipboard(text) {
+      if (!text) return;
+      try {
+        await navigator.clipboard.writeText(text);
+        const btn = document.getElementById('btn-copy-manual');
+        btn.innerText = "COPIED!";
+        setTimeout(() => btn.innerText = "COPY (Spacebar)", 1500);
+      } catch (err) {
+        console.error("Clipboard permission denied. Press Spacebar manually.", err);
+      }
+    }
+
+    function addToHistory(asin, summary) {
+      if(history.length > 0 && history[0].asin === asin) return; // Prevent dupes
+
+      history.unshift({ asin, summary });
+      if (history.length > 5) history.pop();
+
+      const list = document.getElementById('history-list');
+      list.innerHTML = '';
+      history.forEach(item => {
+        const li = document.createElement('li');
+        li.className = 'history-item';
+        
+        const textDiv = document.createElement('div');
+        textDiv.innerHTML = `<strong>${item.asin}</strong><br><span style="color:#6b7280">${item.summary}</span>`;
+        
+        const copyBtn = document.createElement('button');
+        copyBtn.className = 'history-btn';
+        copyBtn.innerText = 'Copy';
+        copyBtn.onclick = () => copyToClipboard(item.asin);
+
+        li.appendChild(textDiv);
+        li.appendChild(copyBtn);
+        list.appendChild(li);
+      });
+    }
+  </script>
+</body>
+</html>
