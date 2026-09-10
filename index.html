@@ -33,6 +33,7 @@
     button:active { transform: scale(0.98); }
     button.btn-secondary { background: #64748b; }
     button.btn-success { background: var(--success); }
+    button.btn-danger { background: #ef4444; }
     
     .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 24px; }
     .step-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
@@ -56,7 +57,8 @@
     }
     .history-btn { padding: 6px 12px; font-size: 0.8rem; width: auto; background: #e5e7eb; color: #374151; }
     
-    textarea { width: 100%; height: 300px; padding: 12px; border: 1px solid var(--border); border-radius: 8px; font-family: monospace; font-size: 0.9rem; margin-bottom: 15px; resize: vertical; }
+    input[type="text"] { width: 100%; padding: 12px; border: 1px solid var(--border); border-radius: 8px; font-size: 1rem; margin-bottom: 15px; }
+    textarea { width: 100%; height: 260px; padding: 12px; border: 1px solid var(--border); border-radius: 8px; font-family: monospace; font-size: 0.9rem; margin-bottom: 15px; resize: vertical; }
   </style>
 </head>
 <body>
@@ -64,11 +66,22 @@
   <!-- ADMIN VIEW -->
   <div id="admin" class="view">
     <div class="card" style="max-width: 800px; margin: 0 auto;">
-      <h1>Import Catalog</h1>
-      <p style="margin-bottom: 15px; color: #6b7280;">Paste Tab-Separated Values from Excel/Sheets.<br>Order: <strong>Category | ASIN | Size | Cut | Color</strong></p>
-      <textarea id="tsv-input" placeholder="King Jersey Polo&#9;B07L38GB1V&#9;4XL&#9;Tall&#9;Midnight Blue..."></textarea>
-      <button id="btn-import">Parse & Upload Catalog</button>
+      <h1>Import Tab from Excel</h1>
+      
+      <label style="display: block; font-weight: 600; margin-bottom: 6px;">1. Tab / Category Name:</label>
+      <input type="text" id="cat-input" placeholder="e.g. King Lightweight Polo">
+
+      <label style="display: block; font-weight: 600; margin-bottom: 6px;">2. Paste Columns A, B, and C (ASIN, Size, Color):</label>
+      <textarea id="tsv-input" placeholder="B099WVQ1V4&#9;8X-Large Tall&#9;Rich Burgundy&#10;B07HYGC4K5&#9;8X-Large Big&#9;Rich Burgundy"></textarea>
+
+      <button id="btn-import">Upload This Tab</button>
       <div id="admin-status" style="margin-top: 15px; font-weight: bold;"></div>
+
+      <hr style="margin: 25px 0; border: none; border-top: 1px solid var(--border);">
+
+      <h2>Database Management</h2>
+      <p style="font-size: 0.85rem; color: #6b7280; margin-bottom: 10px;">To delete all previous data and start fresh, click below.</p>
+      <button id="btn-clear-db" class="btn-danger" style="padding: 10px; font-size: 0.9rem;">Wipe Entire Catalog</button>
     </div>
   </div>
 
@@ -89,7 +102,7 @@
         <h2>Active Item</h2>
         <span id="connection-status" style="color: #6b7280; font-size: 0.8rem;">🟢 Listening</span>
       </div>
-      <p id="desktop-summary" style="color: #6b7280; margin-top: 10px;">Waiting for scan...</p>
+      <p id="desktop-summary" style="color: #6b7280; margin-top: 10px;">Waiting for selection...</p>
       <div class="asin-display" id="desktop-asin">------</div>
       <button id="btn-copy-manual" class="btn-success">COPY (Spacebar)</button>
     </div>
@@ -101,11 +114,8 @@
   <!-- Firebase SDKs -->
   <script type="module">
     import { initializeApp } from "https://www.gstatic.com/firebasejs/10.4.0/firebase-app.js";
-    import { getDatabase, ref, set, update, onValue } from "https://www.gstatic.com/firebasejs/10.4.0/firebase-database.js";
+    import { getDatabase, ref, set, update, remove, onValue } from "https://www.gstatic.com/firebasejs/10.4.0/firebase-database.js";
 
-    // ==========================================
-    // 1. CONFIGURED FIREBASE CREDENTIALS
-    // ==========================================
     const firebaseConfig = {
       apiKey: "AIzaSyBaXj1_y-Qne4bUeS5cCFNLz2wQvJN0lSc",
       authDomain: "fir-6c676.firebaseapp.com",
@@ -121,7 +131,7 @@
     const db = getDatabase(app);
 
     // ==========================================
-    // ROUTING LOGIC
+    // ROUTING
     // ==========================================
     function handleRoute() {
       document.querySelectorAll('.view').forEach(v => v.classList.remove('active-view'));
@@ -141,35 +151,86 @@
     let catalog = [];
 
     // ==========================================
-    // ADMIN LOGIC
+    // ADMIN LOGIC (Supports 3-col format from Excel)
     // ==========================================
     document.getElementById('btn-import').addEventListener('click', async () => {
       const text = document.getElementById('tsv-input').value;
+      const customCategory = document.getElementById('cat-input').value.trim();
       const rows = text.trim().split('\n');
       const catalogData = {};
       let count = 0;
 
       rows.forEach(row => {
         const cols = row.split('\t').map(c => c.trim());
-        if (cols.length >= 5) {
-          const [category, asin, size, cut, color] = cols;
+        if (cols.length < 3) return;
+
+        // Skip header rows if present
+        if (cols[0].toLowerCase() === 'asin' || cols[1].toLowerCase() === 'size') return;
+
+        let asin = '', rawSize = '', color = '', category = customCategory;
+        let cut = 'Regular', size = '';
+
+        if (cols.length === 3) {
+          // Format from screenshot: ASIN | Size & Cut | Color
+          asin = cols[0];
+          rawSize = cols[1];
+          color = cols[2];
+        } else if (cols.length === 4) {
+          category = cols[0];
+          asin = cols[1];
+          rawSize = cols[2];
+          color = cols[3];
+        } else if (cols.length >= 5) {
+          category = cols[0];
+          asin = cols[1];
+          size = cols[2];
+          cut = cols[3];
+          color = cols[4];
+        }
+
+        if (!category) {
+          category = "General";
+        }
+
+        // Auto-split Size and Cut (e.g. "8X-Large Tall" -> "8X-Large" + "Tall")
+        if (!size && rawSize) {
+          if (/\bTall\b/i.test(rawSize)) {
+            cut = 'Tall';
+            size = rawSize.replace(/\bTall\b/i, '').trim();
+          } else if (/\bBig\b/i.test(rawSize)) {
+            cut = 'Big';
+            size = rawSize.replace(/\bBig\b/i, '').trim();
+          } else {
+            size = rawSize;
+          }
+        }
+
+        if (asin && size && color) {
           catalogData[asin] = { category, asin, size, cut, color };
           count++;
         }
       });
 
       if (count === 0) {
-        document.getElementById('admin-status').innerText = "❌ No valid rows found. Check format.";
+        document.getElementById('admin-status').innerText = "❌ No valid rows found. Check your columns.";
         return;
       }
 
       document.getElementById('admin-status').innerText = "Uploading...";
       try {
         await update(ref(db, 'catalog'), catalogData);
-        document.getElementById('admin-status').innerText = `✅ Success: Uploaded ${count} items.`;
+        document.getElementById('admin-status').innerText = `✅ Success: Uploaded ${count} items under '${customCategory || "General"}'.`;
         document.getElementById('tsv-input').value = '';
       } catch (e) {
         document.getElementById('admin-status').innerText = `❌ Error: ${e.message}`;
+      }
+    });
+
+    // Wipe Database
+    document.getElementById('btn-clear-db').addEventListener('click', async () => {
+      if (confirm("Are you sure you want to delete the entire catalog? This cannot be undone.")) {
+        await remove(ref(db, 'catalog'));
+        alert("Catalog wiped clean.");
       }
     });
 
@@ -185,7 +246,7 @@
           catalog = Object.values(data);
           renderPackStep();
         } else {
-          document.getElementById('options-grid').innerHTML = "<p style='grid-column: span 2; color: #6b7280;'>Catalog is empty. Go to #admin to paste your spreadsheet data.</p>";
+          document.getElementById('options-grid').innerHTML = "<p style='grid-column: span 2; color: #6b7280;'>Catalog is empty. Open #admin to paste your spreadsheet.</p>";
         }
       });
 
@@ -325,7 +386,7 @@
         btn.innerText = "COPIED!";
         setTimeout(() => btn.innerText = "COPY (Spacebar)", 1500);
       } catch (err) {
-        console.error("Clipboard permission issue:", err);
+        console.error("Clipboard issue:", err);
       }
     }
 
